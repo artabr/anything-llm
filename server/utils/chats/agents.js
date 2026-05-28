@@ -4,6 +4,7 @@ const {
 } = require("../../models/workspaceAgentInvocation");
 const { writeResponseChunk } = require("../helpers/chat/responses");
 const { Workspace } = require("../../models/workspace");
+const { getTraceContext } = require("../langsmith");
 
 /**
  * In-memory cache for attachments associated with agent invocations.
@@ -12,6 +13,15 @@ const { Workspace } = require("../../models/workspace");
  * @type {Map<string, Array>}
  */
 const invocationAttachmentsCache = new Map();
+
+/**
+ * In-memory cache for LangSmith trace contexts associated with agent invocations.
+ * The HTTP handler runs inside runWithTraceContext; the WebSocket handler is a
+ * separate async call stack and cannot inherit AsyncLocalStorage automatically.
+ * We capture the context here and restore it in agentWebsocket.js.
+ * @type {Map<string, {id: string, projectName: string}>}
+ */
+const invocationTraceContextCache = new Map();
 
 /**
  * Store attachments for an invocation UUID
@@ -78,8 +88,10 @@ async function grepAgents({
       return;
     }
 
-    // Cache attachments for the websocket handler to retrieve later
+    // Cache attachments and trace context for the websocket handler to retrieve later
     cacheInvocationAttachments(newInvocation.uuid, attachments);
+    const traceCtx = getTraceContext();
+    if (traceCtx) invocationTraceContextCache.set(newInvocation.uuid, traceCtx);
 
     writeResponseChunk(response, {
       id: uuid,
@@ -108,4 +120,19 @@ async function grepAgents({
   return false;
 }
 
-module.exports = { grepAgents, getAndClearInvocationAttachments };
+/**
+ * Retrieve and remove the LangSmith trace context for an invocation UUID.
+ * @param {string} uuid - The invocation UUID
+ * @returns {{id: string, projectName: string}|null}
+ */
+function getAndClearInvocationTraceContext(uuid) {
+  const ctx = invocationTraceContextCache.get(uuid) || null;
+  invocationTraceContextCache.delete(uuid);
+  return ctx;
+}
+
+module.exports = {
+  grepAgents,
+  getAndClearInvocationAttachments,
+  getAndClearInvocationTraceContext,
+};

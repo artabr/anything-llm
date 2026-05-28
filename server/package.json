@@ -75,6 +75,7 @@
     "jsonrepair": "^3.7.0",
     "jsonwebtoken": "^9.0.0",
     "langchain": "0.1.36",
+    "langsmith": "^0.1.68",
     "marked": "15.0.12",
     "mime": "^3.0.0",
     "moment": "^2.29.4",

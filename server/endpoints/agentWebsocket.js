@@ -7,6 +7,10 @@ const {
   WEBSOCKET_BAIL_COMMANDS,
 } = require("../utils/agents/aibitat/plugins/websocket");
 const { safeJsonParse } = require("../utils/http");
+const { runWithTraceContext } = require("../utils/langsmith");
+const {
+  getAndClearInvocationTraceContext,
+} = require("../utils/chats/agents");
 
 // Setup listener for incoming messages to relay to socket so it can be handled by agent plugin.
 function relayToSocket(message) {
@@ -52,7 +56,12 @@ function agentWebsocket(app) {
 
       await Telemetry.sendTelemetry("agent_chat_started");
       await agentHandler.createAIbitat({ socket });
-      await agentHandler.startAgentCluster();
+      const traceContext = getAndClearInvocationTraceContext(
+        String(request.params.uuid)
+      );
+      await runWithTraceContext(traceContext, () =>
+        agentHandler.startAgentCluster()
+      );
     } catch (e) {
       console.error(e.message, e);
       socket?.send(JSON.stringify({ type: "wssFailure", content: e.message }));

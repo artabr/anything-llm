@@ -16,6 +16,7 @@ const { writeResponseChunk } = require("../utils/helpers/chat/responses");
 const { WorkspaceThread } = require("../models/workspaceThread");
 const { User } = require("../models/user");
 const { getModelTag } = require("./utils");
+const { startChatTrace, runWithTraceContext } = require("../utils/langsmith");
 
 function chatEndpoints(app) {
   if (!app) return;
@@ -41,10 +42,17 @@ function chatEndpoints(app) {
           return;
         }
 
+        const traceContext = startChatTrace({
+          message,
+          workspaceSlug: workspace.slug,
+          externalParentRunId: request.headers["x-langsmith-trace-id"] || null,
+        });
+
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("Content-Type", "text/event-stream");
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Connection", "keep-alive");
+        if (traceContext) response.setHeader("x-langsmith-trace-id", traceContext.id);
         response.flushHeaders();
 
         if (multiUserMode(response) && !(await User.canSendChat(user))) {
@@ -59,14 +67,16 @@ function chatEndpoints(app) {
           return;
         }
 
-        await streamChatWithWorkspace(
-          response,
-          workspace,
-          message,
-          workspace?.chatMode,
-          user,
-          null,
-          attachments
+        await runWithTraceContext(traceContext, () =>
+          streamChatWithWorkspace(
+            response,
+            workspace,
+            message,
+            workspace?.chatMode,
+            user,
+            null,
+            attachments
+          )
         );
         await Telemetry.sendTelemetry("sent_chat", {
           multiUserMode: multiUserMode(response),
@@ -128,10 +138,17 @@ function chatEndpoints(app) {
           return;
         }
 
+        const traceContext = startChatTrace({
+          message,
+          workspaceSlug: workspace.slug,
+          externalParentRunId: request.headers["x-langsmith-trace-id"] || null,
+        });
+
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("Content-Type", "text/event-stream");
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Connection", "keep-alive");
+        if (traceContext) response.setHeader("x-langsmith-trace-id", traceContext.id);
         response.flushHeaders();
 
         if (multiUserMode(response) && !(await User.canSendChat(user))) {
@@ -146,14 +163,16 @@ function chatEndpoints(app) {
           return;
         }
 
-        await streamChatWithWorkspace(
-          response,
-          workspace,
-          message,
-          workspace?.chatMode,
-          user,
-          thread,
-          attachments
+        await runWithTraceContext(traceContext, () =>
+          streamChatWithWorkspace(
+            response,
+            workspace,
+            message,
+            workspace?.chatMode,
+            user,
+            thread,
+            attachments
+          )
         );
 
         // If thread was renamed emit event to frontend via special `action` response.

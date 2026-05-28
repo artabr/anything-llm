@@ -4,6 +4,9 @@ const { WorkspaceChats } = require("../../models/workspaceChats");
 const { WorkspaceParsedFiles } = require("../../models/workspaceParsedFiles");
 const { getVectorDbClass, resolveProviderConnector } = require("../helpers");
 const { writeResponseChunk } = require("../helpers/chat/responses");
+const {
+  LLMPerformanceMonitor,
+} = require("../helpers/chat/LLMPerformanceMonitor");
 const { grepAgents } = require("./agents");
 const {
   grepCommand,
@@ -12,6 +15,11 @@ const {
   recentChatHistory,
   sourceIdentifier,
 } = require("./index");
+const {
+  traceRetrieval,
+  endChatTrace,
+  getTraceContext,
+} = require("../langsmith");
 
 const VALID_CHAT_MODE = ["automatic", "chat", "query"];
 
@@ -174,6 +182,7 @@ async function streamChatWithWorkspace(
     });
   });
 
+  const retrievalStart = Date.now();
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
@@ -190,6 +199,15 @@ async function streamChatWithWorkspace(
           sources: [],
           message: null,
         };
+
+  if (!vectorSearchResults.message && embeddingsCount !== 0) {
+    traceRetrieval({
+      query: updatedMessage,
+      namespace: workspace.slug,
+      results: vectorSearchResults.sources,
+      duration: (Date.now() - retrievalStart) / 1000,
+    });
+  }
 
   // Failed similarity search if it was run at all and failed.
   if (!!vectorSearchResults.message) {
@@ -287,6 +305,13 @@ async function streamChatWithWorkspace(
 
     completeText = textResponse;
     metrics = performanceMetrics;
+    LLMPerformanceMonitor.trace({
+      provider: LLMConnector.className || LLMConnector.constructor.name,
+      model: LLMConnector.model,
+      messages,
+      textResponse: completeText,
+      metrics,
+    });
     writeResponseChunk(response, {
       uuid,
       sources,
@@ -306,6 +331,13 @@ async function streamChatWithWorkspace(
       sources,
     });
     metrics = stream.metrics;
+    LLMPerformanceMonitor.trace({
+      provider: LLMConnector.className || LLMConnector.constructor.name,
+      model: LLMConnector.model,
+      messages,
+      textResponse: completeText,
+      metrics,
+    });
   }
 
   if (completeText?.length > 0) {
@@ -323,6 +355,11 @@ async function streamChatWithWorkspace(
       user,
     });
 
+    endChatTrace(getTraceContext(), {
+      textResponse: completeText,
+      sources,
+      metrics,
+    });
     writeResponseChunk(response, {
       uuid,
       type: "finalizeResponseStream",
@@ -334,6 +371,11 @@ async function streamChatWithWorkspace(
     return;
   }
 
+  endChatTrace(getTraceContext(), {
+    textResponse: completeText,
+    sources,
+    metrics,
+  });
   writeResponseChunk(response, {
     uuid,
     type: "finalizeResponseStream",

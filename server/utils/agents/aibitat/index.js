@@ -5,6 +5,10 @@ const Providers = require("./providers/index.js");
 const { Telemetry } = require("../../../models/telemetry.js");
 const { v4 } = require("uuid");
 const { ToolReranker } = require("./utils/toolReranker.js");
+const {
+  LLMPerformanceMonitor,
+} = require("../../helpers/chat/LLMPerformanceMonitor");
+const { traceToolCall } = require("../../langsmith");
 
 /**
  * AIbitat is a class that manages the conversation between agents.
@@ -977,6 +981,14 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
     );
 
     if (completionStream.functionCall) {
+      LLMPerformanceMonitor.trace({
+        provider: this.providerInstance.constructor.name,
+        model: this.providerInstance.model,
+        messages,
+        functions,
+        textResponse: `[function_call: ${completionStream.functionCall.name}]`,
+        metrics: this.providerInstance.getUsage(),
+      });
       const { name, arguments: args } = completionStream.functionCall;
       const fn = this.functions.get(name);
       const reachedToolLimit = depth >= this.maxToolCalls;
@@ -1019,7 +1031,14 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
         `[debug]: ${fn.caller} is attempting to call \`${name}\` tool ${JSON.stringify(args, null, 2)}`
       );
 
+      const toolStart0 = Date.now();
       const result = await fn.handler(args);
+      traceToolCall({
+        toolName: name,
+        args,
+        result,
+        duration: (Date.now() - toolStart0) / 1000,
+      });
       Telemetry.sendTelemetry("agent_tool_call", { tool: name }, null, true);
       this.emitter.emit("toolCallResult", {
         toolName: name,
@@ -1089,6 +1108,13 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
     }
 
     const responseUuid = completionStream?.uuid || v4();
+    LLMPerformanceMonitor.trace({
+      provider: this.providerInstance.constructor.name,
+      model: this.providerInstance.model,
+      messages,
+      textResponse: completionStream?.textResponse || "",
+      metrics: this.providerInstance.getUsage(),
+    });
     eventHandler?.("reportStreamEvent", {
       type: "usageMetrics",
       uuid: responseUuid,
@@ -1133,6 +1159,14 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
     );
 
     if (completion.functionCall) {
+      LLMPerformanceMonitor.trace({
+        provider: this.providerInstance.constructor.name,
+        model: this.providerInstance.model,
+        messages,
+        functions,
+        textResponse: `[function_call: ${completion.functionCall.name}]`,
+        metrics: this.providerInstance.getUsage(),
+      });
       const { name, arguments: args } = completion.functionCall;
       const fn = this.functions.get(name);
       const reachedToolLimit = depth >= this.maxToolCalls;
@@ -1176,7 +1210,14 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
         `[debug]: ${fn.caller} is attempting to call \`${name}\` tool`
       );
 
+      const toolStart1 = Date.now();
       const result = await fn.handler(args);
+      traceToolCall({
+        toolName: name,
+        args,
+        result,
+        duration: (Date.now() - toolStart1) / 1000,
+      });
       Telemetry.sendTelemetry("agent_tool_call", { tool: name }, null, true);
       this.emitter.emit("toolCallResult", {
         toolName: name,
@@ -1233,6 +1274,13 @@ https://docs.anythingllm.com/agent/intelligent-tool-selection
       );
     }
 
+    LLMPerformanceMonitor.trace({
+      provider: this.providerInstance.constructor.name,
+      model: this.providerInstance.model,
+      messages,
+      textResponse: completion?.textResponse || "",
+      metrics: this.providerInstance.getUsage(),
+    });
     eventHandler?.("reportStreamEvent", {
       type: "usageMetrics",
       uuid: msgUUID,

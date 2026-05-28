@@ -106,6 +106,35 @@ class LLMPerformanceMonitor {
     };
     return stream;
   }
+  /**
+   * Sends a completed LLM call to LangSmith (fire-and-forget).
+   * No-op if LANGSMITH_API_KEY is not set.
+   * @param {Object} opts
+   * @param {string} opts.provider
+   * @param {string} opts.model
+   * @param {Array} opts.messages
+   * @param {string} opts.textResponse
+   * @param {StreamMetrics|Object} opts.metrics
+   */
+  static trace({
+    provider,
+    model,
+    messages,
+    functions,
+    textResponse,
+    metrics,
+  }) {
+    const { traceLLMCall } = require("../../langsmith");
+    traceLLMCall({
+      runName: `${provider} / ${model}`,
+      provider,
+      model,
+      messages,
+      functions,
+      textResponse,
+      metrics,
+    });
+  }
 }
 
 module.exports = {

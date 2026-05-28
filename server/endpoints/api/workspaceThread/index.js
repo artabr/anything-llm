@@ -14,6 +14,10 @@ const { WorkspaceChats } = require("../../../models/workspaceChats");
 const { User } = require("../../../models/user");
 const { ApiChatHandler } = require("../../../utils/chats/apiChatHandler");
 const { getModelTag } = require("../../utils");
+const {
+  startChatTrace,
+  runWithTraceContext,
+} = require("../../../utils/langsmith");
 
 function apiWorkspaceThreadEndpoints(app) {
   if (!app) return;
@@ -427,15 +431,22 @@ function apiWorkspaceThreadEndpoints(app) {
         }
 
         const user = userId ? await User.get({ id: Number(userId) }) : null;
-        const result = await ApiChatHandler.chatSync({
-          workspace,
-          message,
-          mode: resolvedMode,
-          user,
-          thread,
-          attachments,
-          reset,
+        const traceContext = startChatTrace({
+          message: message || "",
+          workspaceSlug: workspace.slug,
+          externalParentRunId: request.headers["x-langsmith-trace-id"] || null,
         });
+        const result = await runWithTraceContext(traceContext, () =>
+          ApiChatHandler.chatSync({
+            workspace,
+            message,
+            mode: resolvedMode,
+            user,
+            thread,
+            attachments,
+            reset,
+          })
+        );
         await Telemetry.sendTelemetry("sent_chat", {
           LLMSelection: process.env.LLM_PROVIDER || "openai",
           Embedder: process.env.EMBEDDING_ENGINE || "inherit",
@@ -449,6 +460,7 @@ function apiWorkspaceThreadEndpoints(app) {
           threadName: thread?.name,
           userId: user?.id,
         });
+        if (traceContext) response.setHeader("x-langsmith-trace-id", traceContext.id);
         response.status(200).json({ ...result });
       } catch (e) {
         console.error(e.message, e);
@@ -599,23 +611,31 @@ function apiWorkspaceThreadEndpoints(app) {
         }
 
         const user = userId ? await User.get({ id: Number(userId) }) : null;
+        const streamTraceContext = startChatTrace({
+          message: message || "",
+          workspaceSlug: workspace.slug,
+          externalParentRunId: request.headers["x-langsmith-trace-id"] || null,
+        });
 
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("Content-Type", "text/event-stream");
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Connection", "keep-alive");
+        if (streamTraceContext) response.setHeader("x-langsmith-trace-id", streamTraceContext.id);
         response.flushHeaders();
 
-        await ApiChatHandler.streamChat({
-          response,
-          workspace,
-          message,
-          mode: resolvedMode,
-          user,
-          thread,
-          attachments,
-          reset,
-        });
+        await runWithTraceContext(streamTraceContext, () =>
+          ApiChatHandler.streamChat({
+            response,
+            workspace,
+            message,
+            mode: resolvedMode,
+            user,
+            thread,
+            attachments,
+            reset,
+          })
+        );
         await Telemetry.sendTelemetry("sent_chat", {
           LLMSelection: process.env.LLM_PROVIDER || "openai",
           Embedder: process.env.EMBEDDING_ENGINE || "inherit",

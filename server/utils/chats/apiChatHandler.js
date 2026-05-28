@@ -4,11 +4,19 @@ const { WorkspaceChats } = require("../../models/workspaceChats");
 const { getVectorDbClass, resolveProviderConnector } = require("../helpers");
 const { writeResponseChunk } = require("../helpers/chat/responses");
 const {
+  LLMPerformanceMonitor,
+} = require("../helpers/chat/LLMPerformanceMonitor");
+const {
   chatPrompt,
   sourceIdentifier,
   recentChatHistory,
   grepAllSlashCommands,
 } = require("./index");
+const {
+  traceRetrieval,
+  endChatTrace,
+  getTraceContext,
+} = require("../langsmith");
 const {
   EphemeralAgentHandler,
   EphemeralEventListener,
@@ -317,6 +325,7 @@ async function chatSync({
     }
   });
 
+  const retrievalStart = Date.now();
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
@@ -333,6 +342,15 @@ async function chatSync({
           sources: [],
           message: null,
         };
+
+  if (!vectorSearchResults.message && embeddingsCount !== 0) {
+    traceRetrieval({
+      query: message,
+      namespace: workspace.slug,
+      results: vectorSearchResults.sources,
+      duration: (Date.now() - retrievalStart) / 1000,
+    });
+  }
 
   // Failed similarity search if it was run at all and failed.
   if (!!vectorSearchResults.message) {
@@ -423,7 +441,16 @@ async function chatSync({
       user: user,
     });
 
+  LLMPerformanceMonitor.trace({
+    provider: LLMConnector.className || LLMConnector.constructor.name,
+    model: LLMConnector.model,
+    messages,
+    textResponse: textResponse || "",
+    metrics: performanceMetrics,
+  });
+
   if (!textResponse) {
+    endChatTrace(getTraceContext(), { metrics: performanceMetrics });
     return {
       id: uuid,
       type: "abort",
@@ -450,6 +477,11 @@ async function chatSync({
     user,
   });
 
+  endChatTrace(getTraceContext(), {
+    textResponse,
+    sources,
+    metrics: performanceMetrics,
+  });
   return {
     id: uuid,
     type: "textResponse",
@@ -693,6 +725,7 @@ async function streamChat({
     }
   });
 
+  const streamRetrievalStart = Date.now();
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
@@ -709,6 +742,15 @@ async function streamChat({
           sources: [],
           message: null,
         };
+
+  if (!vectorSearchResults.message && embeddingsCount !== 0) {
+    traceRetrieval({
+      query: message,
+      namespace: workspace.slug,
+      results: vectorSearchResults.sources,
+      duration: (Date.now() - streamRetrievalStart) / 1000,
+    });
+  }
 
   // Failed similarity search if it was run at all and failed.
   if (!!vectorSearchResults.message) {
@@ -806,6 +848,13 @@ async function streamChat({
       });
     completeText = textResponse;
     metrics = performanceMetrics;
+    LLMPerformanceMonitor.trace({
+      provider: LLMConnector.className || LLMConnector.constructor.name,
+      model: LLMConnector.model,
+      messages,
+      textResponse: completeText || "",
+      metrics,
+    });
     writeResponseChunk(response, {
       uuid,
       sources,
@@ -822,6 +871,13 @@ async function streamChat({
     });
     completeText = await LLMConnector.handleStream(response, stream, { uuid });
     metrics = stream.metrics;
+    LLMPerformanceMonitor.trace({
+      provider: LLMConnector.className || LLMConnector.constructor.name,
+      model: LLMConnector.model,
+      messages,
+      textResponse: completeText || "",
+      metrics,
+    });
   }
 
   if (completeText?.length > 0) {
@@ -840,6 +896,11 @@ async function streamChat({
       user,
     });
 
+    endChatTrace(getTraceContext(), {
+      textResponse: completeText,
+      sources,
+      metrics,
+    });
     writeResponseChunk(response, {
       uuid,
       type: "finalizeResponseStream",
@@ -852,6 +913,11 @@ async function streamChat({
     return;
   }
 
+  endChatTrace(getTraceContext(), {
+    textResponse: completeText,
+    sources,
+    metrics,
+  });
   writeResponseChunk(response, {
     uuid,
     type: "finalizeResponseStream",

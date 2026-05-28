@@ -11,6 +11,10 @@ const {
 } = require("../../../utils/chats/openaiCompatible");
 const { getModelTag } = require("../../utils");
 const { extractTextContent, extractAttachments } = require("./helpers");
+const {
+  startChatTrace,
+  runWithTraceContext,
+} = require("../../../utils/langsmith");
 
 function apiOpenAICompatibleEndpoints(app) {
   if (!app) return;
@@ -132,14 +136,22 @@ function apiOpenAICompatibleEndpoints(app) {
         const history = messages.filter((chat) => chat.role !== "system") ?? [];
 
         if (!stream) {
-          const chatResult = await OpenAICompatibleChat.chatSync({
-            workspace,
-            systemPrompt,
-            history,
-            prompt: extractTextContent(userMessage.content),
-            attachments: extractAttachments(userMessage.content),
-            temperature: Number(temperature),
+          const traceContext = startChatTrace({
+            message: extractTextContent(userMessage.content),
+            workspaceSlug: workspace.slug,
+            externalParentRunId:
+              request.headers["x-langsmith-trace-id"] || null,
           });
+          const chatResult = await runWithTraceContext(traceContext, () =>
+            OpenAICompatibleChat.chatSync({
+              workspace,
+              systemPrompt,
+              history,
+              prompt: extractTextContent(userMessage.content),
+              attachments: extractAttachments(userMessage.content),
+              temperature: Number(temperature),
+            })
+          );
 
           await Telemetry.sendTelemetry("sent_chat", {
             LLMSelection:
@@ -152,24 +164,35 @@ function apiOpenAICompatibleEndpoints(app) {
             workspaceName: workspace?.name,
             chatModel: workspace?.chatModel || "System Default",
           });
+          if (traceContext) response.setHeader("x-langsmith-trace-id", traceContext.id);
           return response.status(200).json(chatResult);
         }
+
+        const streamTraceContext = startChatTrace({
+          message: extractTextContent(userMessage.content),
+          workspaceSlug: workspace.slug,
+          externalParentRunId:
+            request.headers["x-langsmith-trace-id"] || null,
+        });
 
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("Content-Type", "text/event-stream");
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Connection", "keep-alive");
+        if (streamTraceContext) response.setHeader("x-langsmith-trace-id", streamTraceContext.id);
         response.flushHeaders();
 
-        await OpenAICompatibleChat.streamChat({
-          workspace,
-          systemPrompt,
-          history,
-          prompt: extractTextContent(userMessage.content),
-          attachments: extractAttachments(userMessage.content),
-          temperature: Number(temperature),
-          response,
-        });
+        await runWithTraceContext(streamTraceContext, () =>
+          OpenAICompatibleChat.streamChat({
+            workspace,
+            systemPrompt,
+            history,
+            prompt: extractTextContent(userMessage.content),
+            attachments: extractAttachments(userMessage.content),
+            temperature: Number(temperature),
+            response,
+          })
+        );
         await Telemetry.sendTelemetry("sent_chat", {
           LLMSelection: process.env.LLM_PROVIDER || "openai",
           Embedder: process.env.EMBEDDING_ENGINE || "inherit",

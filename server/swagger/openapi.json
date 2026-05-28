@@ -2342,6 +2342,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "x-langsmith-trace-id",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2429,6 +2436,13 @@
             "name": "slug",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-langsmith-trace-id",
+            "in": "header",
             "schema": {
               "type": "string"
             }
@@ -3217,6 +3231,13 @@
               "type": "string"
             },
             "description": "Unique slug of thread"
+          },
+          {
+            "name": "x-langsmith-trace-id",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3312,6 +3333,13 @@
               "type": "string"
             },
             "description": "Unique slug of thread"
+          },
+          {
+            "name": "x-langsmith-trace-id",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3583,7 +3611,15 @@
           "OpenAI Compatible Endpoints"
         ],
         "description": "Execute a chat with a workspace with OpenAI compatibility. Supports streaming as well. Model must be a workspace slug from /models.",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "x-langsmith-trace-id",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"
