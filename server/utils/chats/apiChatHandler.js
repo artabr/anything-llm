@@ -283,13 +283,18 @@ async function chatSync({
   let contextTexts = [];
   let sources = [];
   let pinnedDocIdentifiers = [];
-  const { rawHistory, chatHistory } = await recentChatHistory({
-    user,
-    workspace,
-    thread,
-    messageLimit,
-    apiSessionId: sessionId,
-  });
+  // Without a sessionId (and no user/thread), all unscoped API chats for the workspace
+  // would bleed together. Treat no-session API calls as stateless — no history.
+  const { rawHistory, chatHistory } =
+    !sessionId && !user && !thread
+      ? { rawHistory: [], chatHistory: [] }
+      : await recentChatHistory({
+          user,
+          workspace,
+          thread,
+          messageLimit,
+          apiSessionId: sessionId,
+        });
 
   await new DocumentManager({
     workspace,
@@ -677,13 +682,18 @@ async function streamChat({
   let contextTexts = [];
   let sources = [];
   let pinnedDocIdentifiers = [];
-  const { rawHistory, chatHistory } = await recentChatHistory({
-    user,
-    workspace,
-    thread,
-    messageLimit,
-    apiSessionId: sessionId,
-  });
+  // Without a sessionId (and no user/thread), all unscoped API chats for the workspace
+  // would bleed together. Treat no-session API calls as stateless — no history.
+  const { rawHistory, chatHistory } =
+    !sessionId && !user && !thread
+      ? { rawHistory: [], chatHistory: [] }
+      : await recentChatHistory({
+          user,
+          workspace,
+          thread,
+          messageLimit,
+          apiSessionId: sessionId,
+        });
 
   // Look for pinned documents and see if the user decided to use this feature. We will also do a vector search
   // as pinning is a supplemental tool but it should be used with caution since it can easily blow up a context window.

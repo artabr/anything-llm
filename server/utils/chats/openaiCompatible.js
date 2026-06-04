@@ -12,6 +12,11 @@ const {
   endChatTrace,
   getTraceContext,
 } = require("../langsmith");
+const {
+  EphemeralAgentHandler,
+  EphemeralEventListener,
+} = require("../agents/ephemeral");
+const { Telemetry } = require("../../models/telemetry");
 
 const { PassThrough } = require("stream");
 
@@ -25,6 +30,52 @@ async function chatSync({
 }) {
   const uuid = uuidv4();
   const chatMode = workspace?.chatMode ?? "automatic";
+
+  if (
+    await EphemeralAgentHandler.isAgentInvocation({
+      message: prompt,
+      workspace,
+      chatMode,
+    })
+  ) {
+    await Telemetry.sendTelemetry("agent_chat_started");
+    const agentHandler = new EphemeralAgentHandler({
+      uuid,
+      workspace,
+      prompt,
+      userId: null,
+      threadId: null,
+      sessionId: null,
+      attachments,
+    });
+    const eventListener = new EphemeralEventListener();
+    await agentHandler.init();
+    await agentHandler.createAIbitat({ handler: eventListener });
+    agentHandler.startAgentCluster();
+
+    return await eventListener
+      .waitForClose()
+      .then(async ({ thoughts, textResponse, outputs, metrics }) => {
+        await WorkspaceChats.new({
+          workspaceId: workspace.id,
+          prompt: String(prompt),
+          response: {
+            text: textResponse,
+            sources: [],
+            attachments,
+            type: chatMode,
+            thoughts,
+            outputs,
+            metrics,
+          },
+          include: false,
+        });
+        return formatJSON(
+          { id: uuid, textResponse },
+          { model: workspace.slug, finish_reason: "stop", usage: metrics }
+        );
+      });
+  }
 
   const { connector: LLMConnector } = await resolveProviderConnector({
     workspace,
@@ -230,6 +281,7 @@ async function chatSync({
       metrics,
       attachments,
     },
+    include: false,
   });
 
   endChatTrace(getTraceContext(), { textResponse, sources, metrics });
@@ -258,6 +310,82 @@ async function streamChat({
 }) {
   const uuid = uuidv4();
   const chatMode = workspace?.chatMode ?? "automatic";
+
+  if (
+    await EphemeralAgentHandler.isAgentInvocation({
+      message: prompt,
+      workspace,
+      chatMode,
+    })
+  ) {
+    await Telemetry.sendTelemetry("agent_chat_started");
+    const agentHandler = new EphemeralAgentHandler({
+      uuid,
+      workspace,
+      prompt,
+      userId: null,
+      threadId: null,
+      sessionId: null,
+      attachments,
+    });
+    const eventListener = new EphemeralEventListener();
+    await agentHandler.init();
+    await agentHandler.createAIbitat({ handler: eventListener });
+    agentHandler.startAgentCluster();
+
+    // Proxy that converts AnythingLLM agent SSE chunks to OpenAI delta format.
+    // Only textResponseChunk carries streamed content; thought/metrics chunks are skipped.
+    const agentInterceptor = {
+      write(data) {
+        try {
+          const chunk = JSON.parse(data.toString().split("data: ")[1]);
+          if (chunk.type === "textResponseChunk") {
+            response.write(
+              `data: ${JSON.stringify(
+                formatJSON(
+                  { id: chunk.id, textResponse: chunk.textResponse },
+                  { chunked: true, model: workspace.slug }
+                )
+              )}\n\n`
+            );
+          }
+        } catch {}
+      },
+    };
+
+    return eventListener
+      .streamAgentEvents(agentInterceptor, uuid)
+      .then(async ({ thoughts, textResponse, outputs, metrics }) => {
+        await WorkspaceChats.new({
+          workspaceId: workspace.id,
+          prompt: String(prompt),
+          response: {
+            text: textResponse,
+            sources: [],
+            attachments,
+            type: chatMode,
+            thoughts,
+            outputs,
+            metrics,
+          },
+          include: false,
+        });
+        response.write(
+          `data: ${JSON.stringify(
+            formatJSON(
+              { id: uuid, textResponse: "" },
+              {
+                chunked: true,
+                model: workspace.slug,
+                finish_reason: "stop",
+                usage: metrics,
+              }
+            )
+          )}\n\n`
+        );
+        response.write("data: [DONE]\n\n");
+      });
+  }
 
   const { connector: LLMConnector } = await resolveProviderConnector({
     workspace,
@@ -506,6 +634,7 @@ async function streamChat({
         metrics: stream.metrics,
         attachments,
       },
+      include: false,
     });
 
     endChatTrace(getTraceContext(), {

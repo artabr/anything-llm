@@ -96,6 +96,10 @@ class EphemeralAgentHandler extends AgentHandler {
 
   async #chatHistory(limit = 10) {
     if (!this.#workspace) return [];
+    // Without any scoping (user, thread, session), the query would match
+    // all null-scoped chats — in single-user mode this leaks frontend
+    // default-thread history into unrelated API calls.
+    if (!this.#userId && !this.#threadId && !this.#sessionId) return [];
 
     try {
       const rawHistory = (
